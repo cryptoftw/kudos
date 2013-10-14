@@ -1092,9 +1092,8 @@ int64 static GetBlockValue(int nHeight, int64 nFees)
     return nSubsidy + nFees;
 }
 
-static const int64 nTargetTimespan = 2 * 24 * 60 * 60; // Kudos: 2 days
+int64 nTargetTimespan = 2 * 24 * 60 * 60; // Kudos: 2 days
 static const int64 nTargetSpacing = 90; // Kudos: 90 sec
-static const int64 nInterval = nTargetTimespan / nTargetSpacing;
 
 //
 // minimum amount of work that could possibly be required nTime after
@@ -1111,8 +1110,8 @@ unsigned int ComputeMinWork(unsigned int nBase, int64 nTime)
     bnResult.SetCompact(nBase);
     while (nTime > 0 && bnResult < bnProofOfWorkLimit)
     {
-        // Maximum 400% adjustment...
-        bnResult *= 4;
+        // Maximum 10% adjustment...
+        bnResult = (bnResult * 11) / 10;
         // ... in best-case exactly 4-times-normal target time
         nTime -= nTargetTimespan*4;
     }
@@ -1123,14 +1122,28 @@ unsigned int ComputeMinWork(unsigned int nBase, int64 nTime)
 
 unsigned int static GetNextWorkRequired(const CBlockIndex* pindexLast, const CBlockHeader *pblock)
 {
-    unsigned int nProofOfWorkLimit = bnProofOfWorkLimit.GetCompact();
+    unsigned int nProofOfWorkLimit = bnProofOfWorkLimit.GetCompact();   
 
     // Genesis block
     if (pindexLast == NULL)
         return nProofOfWorkLimit;
 
-    // Only change once per interval
-    if ((pindexLast->nHeight+1) % nInterval != 0)
+    // The next block
+    int nHeight = pindexLast->nHeight + 1;
+
+    // The 1st hard fork
+    int nForkOne = 14660;
+    if(nHeight >= nForkOne)
+      nTargetTimespan = (20 * 90); // 20 blocks - 30 minutes
+
+    // 1920 blocks initial, 20 after the 1st hard fork
+    int nInterval = nTargetTimespan / nTargetSpacing;
+
+    bool fHardFork = (nHeight == nForkOne);
+    if(fTestNet) fHardFork = false;
+
+    // Difficulty rules regular blocks
+    if((nHeight % nInterval != 0) && !(fHardFork))
     {
         // Special difficulty rule for testnet:
         if (fTestNet)
@@ -1166,12 +1179,21 @@ unsigned int static GetNextWorkRequired(const CBlockIndex* pindexLast, const CBl
 
     // Limit adjustment step
     int64 nActualTimespan = pindexLast->GetBlockTime() - pindexFirst->GetBlockTime();
-    printf("  nActualTimespan = %"PRI64d"  before bounds\n", nActualTimespan);
-    if (nActualTimespan < nTargetTimespan/4)
-        nActualTimespan = nTargetTimespan/4;
-    if (nActualTimespan > nTargetTimespan*4)
-        nActualTimespan = nTargetTimespan*4;
+    printf(" nActualTimespan = %"PRI64d" before bounds\n", nActualTimespan);
+    
+    // The initial settings (4.0 difficulty limiter)
+    int nActualTimespanMax = nTargetTimespan*4;
+    int nActualTimespanMin = nTargetTimespan/4;
 
+    // The 1st hard fork (10% difficulty limiter)
+    if(nHeight >= nForkOne) {
+        nActualTimespanMax = nTargetTimespan*11/10;
+        nActualTimespanMin = nTargetTimespan*10/11;
+    }
+
+    if(nActualTimespan < nActualTimespanMin) nActualTimespan = nActualTimespanMin;
+    if(nActualTimespan > nActualTimespanMax) nActualTimespan = nActualTimespanMax;
+    
     // Retarget
     CBigNum bnNew;
     bnNew.SetCompact(pindexLast->nBits);
